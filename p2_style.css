@@ -1,0 +1,83 @@
+/* p2_style.css - Specific overrides for Player 2 full screen display */
+
+body {
+    background: #000;
+    overflow: hidden;
+}
+
+.p2-full-hud {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    padding: 2rem;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    pointer-events: none;
+}
+
+.center-flex {
+    display: flex;
+    justify-content: center;
+    width: 100%;
+}
+
+.left-flex {
+    display: flex;
+    justify-content: flex-start;
+    width: 100%;
+}
+
+.hud-middle {
+    margin-top: auto;
+    margin-bottom: auto;
+    /* Vertically center the direction panel */
+}
+
+/* Spinner for wait modal */
+.loader {
+    border: 8px solid rgba(255, 255, 255, 0.1);
+    border-top: 8px solid #ff0055;
+    border-radius: 50%;
+    width: 60px;
+    height: 60px;
+    animation: spin 1s linear infinite;
+    margin: 2rem auto;
+    align-items: center;
+    background: rgba(255, 0, 85, 0.4);
+    border-radius: 5px;
+    padding: 0.5rem;
+}
+
+/* Base positioning for P2 Debug container */
+.hud-bottom-right {
+    position: absolute;
+    bottom: 2rem;
+    right: 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    z-index: 100;
+}
+
+/* Reuse existing debug panel classes but adjusted for p2-theme */
+.debug-panel.p2-theme .debug-title {
+    color: #ff0055;
+}
+
+.debug-panel.p2-theme .debug-view {
+    border-color: rgba(255, 0, 85, 0.3);
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
+}

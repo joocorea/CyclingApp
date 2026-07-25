@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 실감형 사이클링 - Player 2 View</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Orbitron:wght@500;700;900&display=swap"
+        rel="stylesheet">
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="style.css?v=2">
+    <link rel="stylesheet" href="p2_style.css?v=2">
+</head>
+
+<body>
+    <!-- Background Video -->
+    <div class="bg-wrapper">
+        <video id="bg-video" src="nakdong_riding.mp4" loop muted playsinline autoplay></video>
+        <div class="vignette-overlay"></div>
+    </div>
+
+    <!-- P2 Main HUD -->
+    <div class="hud-container" id="hud">
+
+        <!-- Player 2 Central Layout (Full Screen Centered) -->
+        <div class="player-hud p2-full-hud">
+            <div class="hud-top left-flex">
+                <div class="panel glass p2-theme">
+                    <div class="label">P2 DISTANCE</div>
+                    <div class="value"><span id="p2-distance-val">0.00</span><span class="unit">km</span></div>
+                </div>
+            </div>
+
+            <div class="hud-middle left-flex">
+                <div class="panel glass p2-theme direction-panel">
+                    <div class="label">P2 DIR</div>
+                    <div class="value direction" id="p2-direction-val">STRAIGHT</div>
+                </div>
+            </div>
+
+            <div class="hud-bottom left-flex">
+                <div class="speedometer glass p2-theme">
+                    <div class="rpm-label">RPM: <span id="p2-rpm-val">0</span></div>
+                    <div class="speed-value" id="p2-speed-val">0</div>
+                    <div class="speed-unit">km/h</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Debug View for P2 -->
+        <div class="hud-bottom-right">
+            <div class="debug-panel glass p2-theme">
+                <div class="debug-title">VISION SENSOR (P2)</div>
+                <div class="debug-view">
+                    <video id="webcam-video-p2" autoplay playsinline></video>
+                    <canvas id="output-canvas-p2"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Timer (Top Right) -->
+        <div class="hud-top-right" id="timer-panel" style="position: absolute; top: 2rem; right: 2rem; z-index: 50;">
+            <div class="panel glass p2-theme">
+                <div class="label" style="text-align: right;">TIME</div>
+                <div class="value" id="p2-session-time-val" style="text-align: right;">00:00</div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Waiting Modal -->
+    <div class="modal overlay-active" id="wait-modal">
+        <div class="modal-content glass-heavy">
+            <h1 class="gradient-text">PLAYER 2 (Dual Monitor)</h1>
+            <p>메인 화면(Player 1)의 플레이를 기다리고 있습니다...</p>
+            <div class="loader"></div>
+        </div>
+    </div>
+
+    <!-- Main JS -->
+    <script type="module">
+import {
+    PoseLandmarker,
+    DrawingUtils
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/vision_bundle.js";
+
+const dom = {
+    bgVideo: document.getElementById('bg-video'),
+    speedVal: document.getElementById('p2-speed-val'),
+    distanceVal: document.getElementById('p2-distance-val'),
+    rpmVal: document.getElementById('p2-rpm-val'),
+    directionVal: document.getElementById('p2-direction-val'),
+    waitModal: document.getElementById('wait-modal'),
+    hud: document.getElementById('hud'),
+    p2Video: document.getElementById('webcam-video-p2'),
+    p2Canvas: document.getElementById('output-canvas-p2')
+};
+
+// Canvas context
+let canvasCtx = null;
+if (dom.p2Canvas) {
+    dom.p2Canvas.width = 640;
+    dom.p2Canvas.height = 480;
+    canvasCtx = dom.p2Canvas.getContext('2d');
+}
+
+// Start background video implicitly
+dom.bgVideo.play().catch(e => {
+    console.warn("Video play auto-failed, waiting for broadcast start.", e);
+});
+dom.bgVideo.playbackRate = 0;
+
+// Set up Broadcast Channel for receiving data
+const bc = new BroadcastChannel('cycling_data_channel');
+
+bc.onmessage = (event) => {
+    const data = event.data;
+
+    if (data.type === 'START') {
+        // Hide wait modal, show HUD
+        dom.waitModal.classList.add('hidden');
+        dom.hud.classList.remove('hidden');
+        
+        if (data.useCustomBg) {
+            const dbReq = indexedDB.open('VideoShareDB', 1);
+            dbReq.onsuccess = e => {
+                const db = e.target.result;
+                const tx = db.transaction('videos', 'readonly');
+                const store = tx.objectStore('videos');
+                const getReq = store.get('customBg');
+                
+                getReq.onsuccess = getE => {
+                    const fileToLoad = getE.target.result;
+                    if (fileToLoad) {
+                        if (window.p2BlobUrl) URL.revokeObjectURL(window.p2BlobUrl);
+                        window.p2BlobUrl = URL.createObjectURL(fileToLoad);
+                        dom.bgVideo.src = window.p2BlobUrl;
+                        dom.bgVideo.load();
+                        dom.bgVideo.play().catch(e => console.warn(e));
+                    }
+                };
+            };
+        } else {
+            dom.bgVideo.play().catch(e => { });
+        }
+        
+        // Hide local video element since we draw frames to canvas
+        if (dom.p2Video) { dom.p2Video.style.display = 'none'; }
+
+    } else if (data.type === 'STOP') {
+        // End session visual cleanup could go here
+        dom.bgVideo.pause();
+    } else if (data.type === 'UPDATE') {
+
+        // Update HUD text
+        dom.speedVal.innerText = data.speed.toFixed(1);
+        dom.distanceVal.innerText = data.distance.toFixed(3);
+        dom.rpmVal.innerText = data.rpm;
+        dom.directionVal.innerText = data.direction;
+
+        // Visual effects for direction
+        if (data.direction === 'LEFT') {
+            dom.directionVal.style.color = '#00f3ff';
+        } else if (data.direction === 'RIGHT') {
+            dom.directionVal.style.color = '#ff0055';
+        } else {
+            dom.directionVal.style.color = '#ffffff';
+        }
+
+        // Panning logic (P2 follows its own panning logic or master panning)
+        // Here we just use the master translates sent from main window 
+        // to keep the view perfectly synced, or optionally calculate it based on P2's own direction
+        dom.bgVideo.style.transform = `scale(1.1) translateX(${data.translateX}%)`;
+
+        // Sync playback rate
+        if (Math.abs(dom.bgVideo.playbackRate - data.playbackRate) > 0.05) {
+            try {
+                dom.bgVideo.playbackRate = data.playbackRate;
+            } catch (e) { }
+        }
+
+        if (data.timeString) {
+            const timeValElem = document.getElementById('p2-session-time-val');
+            if (timeValElem) timeValElem.innerText = data.timeString;
+        }
+        
+        // Ensure the video is playing if P2 is pedaling
+        if (data.playbackRate > 0 && dom.bgVideo.paused) {
+            dom.bgVideo.play().catch(e => console.warn("Cannot autoplay P2 background video:", e));
+        }
+    } else if (data.type === 'LANDMARKS') {
+        // Draw the broadcasted landmarks and frame
+        if (canvasCtx && data.landmarks) {
+            const drawOverlay = (ctx) => {
+                try {
+                    const drawingUtils = new DrawingUtils(ctx);
+                    drawingUtils.drawConnectors(data.landmarks, PoseLandmarker.POSE_CONNECTIONS, {
+                        color: '#ff0055', lineWidth: 3
+                    });
+                    drawingUtils.drawLandmarks(data.landmarks, {
+                        color: '#ffffff', lineWidth: 1, radius: 2
+                    });
+                } catch(e) {}
+            };
+
+            if (data.frame) {
+                const img = new Image();
+                img.onload = () => {
+                    canvasCtx.save();
+                    canvasCtx.clearRect(0, 0, dom.p2Canvas.width, dom.p2Canvas.height);
+                    canvasCtx.drawImage(img, 0, 0, dom.p2Canvas.width, dom.p2Canvas.height);
+                    drawOverlay(canvasCtx);
+                    canvasCtx.restore();
+                };
+                img.src = data.frame;
+            } else {
+                canvasCtx.save();
+                canvasCtx.clearRect(0, 0, dom.p2Canvas.width, dom.p2Canvas.height);
+                drawOverlay(canvasCtx);
+                canvasCtx.restore();
+            }
+        }
+    }
+};
+
+console.log("P2 View Ready. Waiting for BroadcastChannel data...");
+// Signal ready state after initialization
+bc.postMessage({ type: 'P2_READY' });
+
+</script>
+</body>
+
+</html>
+```
