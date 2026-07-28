@@ -24,6 +24,9 @@
     <!-- Background Video -->
     <div class="bg-wrapper">
         <video id="bg-video" src="Utah Cycling.mp4" loop muted playsinline></video>
+        <div id="yt-player-container" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; opacity: 0; transition: opacity 0.5s ease;">
+            <div id="yt-player"></div>
+        </div>
         <div class="vignette-overlay"></div>
     </div>
 
@@ -152,11 +155,15 @@
                     </select>
                 </div>
                 <div class="select-group" style="grid-column: 1 / -1; margin-top: 10px;">
-                    <label for="bg-video-upload">배경 동영상 선택 (선택 사항):</label>
+                    <label for="bg-video-upload">배경 동영상 (파일 선택):</label>
                     <input type="file" id="bg-video-upload" accept="video/*" class="glass"
                         style="width: 100%; padding: 0.5rem; color: #fff; cursor: pointer;">
-                    <small style="color: #aaa; margin-top: 5px; display: block;">영상을 첨부하지 않으면 기본 '낙동강 라이딩'이
-                        재생됩니다.</small>
+                </div>
+                <div class="select-group" style="grid-column: 1 / -1; margin-top: 10px;">
+                    <label for="yt-video-url">배경 동영상 (유튜브 링크):</label>
+                    <input type="text" id="yt-video-url" class="glass" placeholder="https://www.youtube.com/watch?v=..."
+                        style="width: 100%; padding: 0.5rem; color: #fff; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 4px;">
+                    <small style="color: #aaa; margin-top: 5px; display: block;">파일이나 링크를 첨부하지 않으면 기본 영상이 재생됩니다.</small>
                 </div>
             </div>
 
@@ -222,6 +229,8 @@
             cam1Select: document.getElementById('cam1-select'),
             cam2Select: document.getElementById('cam2-select'),
             bgVideoUpload: document.getElementById('bg-video-upload'),
+            ytVideoUrl: document.getElementById('yt-video-url'),
+            ytPlayerDiv: document.getElementById('yt-player'),
 
             p1: {
                 speedVal: document.getElementById('p1-speed-val'),
@@ -277,6 +286,48 @@
 
         // Custom Video State
         let customBgVideoSrc = null;
+        let customYtVideoId = null;
+        let ytPlayer = null;
+
+        // YouTube API Ready
+        let isYtApiReady = false;
+        window.onYouTubeIframeAPIReady = function() {
+            isYtApiReady = true;
+            if (customYtVideoId && !ytPlayer) {
+                createYtPlayer(customYtVideoId);
+            }
+        };
+        // Load API dynamically
+        (function() {
+            const tag = document.createElement('script');
+            tag.src = "https://www.youtube.com/iframe_api";
+            const firstScriptTag = document.getElementsByTagName('script')[0];
+            firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+        })();
+
+        function createYtPlayer(ytId) {
+            ytPlayer = new YT.Player('yt-player', {
+                host: 'https://www.youtube-nocookie.com',
+                height: '100%', width: '100%', videoId: ytId,
+                playerVars: { 'autoplay': 1, 'controls': 0, 'mute': 1, 'loop': 1, 'modestbranding': 1, 'showinfo': 0, 'rel': 0, 'playlist': ytId, 'origin': 'http://localhost' },
+                events: { 'onReady': (ev) => { 
+                    ev.target.playVideo(); 
+                    const container = document.getElementById('yt-player-container');
+                    if (container) container.style.opacity = '1';
+                } }
+            });
+            // Fallback for local files where onReady might be blocked by browser security
+            setTimeout(() => {
+                const container = document.getElementById('yt-player-container');
+                if (container && container.style.opacity !== '1') container.style.opacity = '1';
+            }, 1500);
+        }
+
+        function extractYouTubeId(url) {
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+            const match = url.match(regExp);
+            return (match && match[2].length === 11) ? match[2] : null;
+        }
 
         // Broadcast Channel setup
         const bc = new BroadcastChannel('cycling_data_channel');
@@ -286,7 +337,8 @@
                     bc.postMessage({
                         type: 'START',
                         cam2Id: dom.cam2Select.value,
-                        useCustomBg: !!customBgVideoSrc // Tell P2 to retrieve the file from IndexedDB
+                        useCustomBg: !!customBgVideoSrc,
+                        youtubeId: customYtVideoId
                     });
                 }
             }
@@ -298,6 +350,7 @@
                 distance: 0,
                 rpm: 0,
                 direction: 'STRAIGHT',
+                currentPan: 0,
                 maxSpeedInSession: 0,
                 yHistory: [],
                 lastPeakTime: 0,
@@ -403,9 +456,45 @@
             dom.btnChartMonthly.addEventListener('click', () => { setActiveFilter(dom.btnChartMonthly); renderChart('monthly'); });
             dom.btnChartYearly.addEventListener('click', () => { setActiveFilter(dom.btnChartYearly); renderChart('yearly'); });
 
+            dom.ytVideoUrl.addEventListener('input', (e) => {
+                const url = e.target.value.trim();
+                const ytId = extractYouTubeId(url);
+                if (ytId) {
+                    customYtVideoId = ytId;
+                    dom.bgVideo.style.opacity = '0';
+                    
+                    if (ytPlayer) {
+                        if (ytPlayer.loadVideoById) ytPlayer.loadVideoById({videoId: ytId, playlist: ytId});
+                        const container = document.getElementById('yt-player-container');
+                        if (container) container.style.opacity = '1';
+                    } else if (isYtApiReady) {
+                        createYtPlayer(ytId);
+                    }
+
+                    // Reset file upload
+                    dom.bgVideoUpload.value = "";
+                    if (customBgVideoSrc) {
+                        URL.revokeObjectURL(customBgVideoSrc);
+                        customBgVideoSrc = null;
+                    }
+                } else if (url === '') {
+                    customYtVideoId = null;
+                    document.getElementById('yt-player-container').style.opacity = '0';
+                    dom.bgVideo.style.opacity = '1';
+                    if (ytPlayer && ytPlayer.pauseVideo) ytPlayer.pauseVideo();
+                }
+            });
+
             dom.bgVideoUpload.addEventListener('change', (e) => {
                 const file = e.target.files[0];
                 if (file) {
+                    // Reset youtube link
+                    dom.ytVideoUrl.value = "";
+                    customYtVideoId = null;
+                    document.getElementById('yt-player-container').style.opacity = '0';
+                    dom.bgVideo.style.opacity = '1';
+                    if (ytPlayer && ytPlayer.pauseVideo) ytPlayer.pauseVideo();
+
                     if (customBgVideoSrc) {
                         URL.revokeObjectURL(customBgVideoSrc);
                     }
@@ -1159,15 +1248,24 @@
             // Panning & Playback Sync Logic
             // 백그라운드 Panning은 기본적으로 1Player 기준으로 맞춤 (혹은 평균 방향 이용 가능)
             let masterDirection = state.p1.direction;
-            let translateX = 0;
+            let targetPan = 0;
 
             if (masterDirection === 'LEFT') {
-                translateX = 3;
+                targetPan = 3;
             } else if (masterDirection === 'RIGHT') {
-                translateX = -3;
+                targetPan = -3;
             }
+            
+            // Smooth interpolation (5% per frame)
+            state.p1.currentPan += (targetPan - state.p1.currentPan) * 0.05;
+            let translateX = state.p1.currentPan.toFixed(2);
 
-            dom.bgVideo.style.transform = `scale(1.1) translateX(${translateX}%)`;
+            if (customYtVideoId && ytPlayer) {
+                const iframe = ytPlayer.getIframe();
+                if (iframe) iframe.style.transform = `scale(1.1) translateX(${translateX}%)`;
+            } else {
+                dom.bgVideo.style.transform = `scale(1.1) translateX(${translateX}%)`;
+            }
 
             // 타이머 업데이트
             let timeString = "00:00";
@@ -1187,20 +1285,35 @@
             let pRate = maxSpeed / 20; // 영상 재생 속도를 정상 배속으로 복구
             pRate = Math.max(0, Math.min(pRate, 4.0)); // 최대 배속 한계를 4.0배로 안정적으로 제한
 
-            if (Math.abs(dom.bgVideo.playbackRate - pRate) > 0.05) {
+            if (customYtVideoId && ytPlayer && ytPlayer.setPlaybackRate) {
                 try {
-                    dom.bgVideo.playbackRate = pRate;
-                } catch (e) { }
+                    ytPlayer.setPlaybackRate(pRate > 0 ? pRate : 0.25);
+                    if (pRate < 0.1 && ytPlayer.getPlayerState() === 1) {
+                        ytPlayer.pauseVideo();
+                    } else if (pRate >= 0.1 && ytPlayer.getPlayerState() !== 1) {
+                        ytPlayer.playVideo();
+                    }
+                } catch(e) {}
+            } else {
+                if (Math.abs(dom.bgVideo.playbackRate - pRate) > 0.05) {
+                    try {
+                        dom.bgVideo.playbackRate = pRate;
+                    } catch (e) { }
+                }
             }
 
             // Sync P2 Display Window (Mode 3) via BroadcastChannel
             if (state.mode === 3) {
-                let p2TranslateX = 0;
+                let p2TargetPan = 0;
                 if (state.p2.direction === 'LEFT') {
-                    p2TranslateX = 3;
+                    p2TargetPan = 3;
                 } else if (state.p2.direction === 'RIGHT') {
-                    p2TranslateX = -3;
+                    p2TargetPan = -3;
                 }
+                
+                // Smooth interpolation for P2
+                state.p2.currentPan += (p2TargetPan - state.p2.currentPan) * 0.05;
+                let p2TranslateX = state.p2.currentPan.toFixed(2);
 
                 bc.postMessage({
                     type: 'UPDATE',
