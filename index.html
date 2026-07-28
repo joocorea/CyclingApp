@@ -128,29 +128,11 @@
             <h1 class="gradient-text">AI 실내 사이클링</h1>
             <p>카메라 앞에서 자전거 페달을 밟아주세요.<br>좌우 어깨를 움직여 방향을 조절합니다.</p>
 
-            <div class="user-settings" style="margin-bottom: 24px; text-align: left;">
-                <div class="select-group">
-                    <label for="user-select">사용자 선택:</label>
-                    <div style="display:flex; flex-direction:column; gap:8px;">
-                        <select id="user-select" class="dropdown glass">
-                            <!-- Options injected by JS -->
-                        </select>
-                        <input type="text" id="username-input" class="glass" placeholder="새 사용자 이름 (예: 홍길동)"
-                            style="display:none; width: 100%; padding: 0.8rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.5); color: #fff; box-sizing: border-box;">
-                    </div>
-                </div>
-            </div>
 
             <div class="camera-settings">
-                <div class="select-group">
-                    <label for="cam1-select">P1 (메인) 카메라:</label>
+                <div class="select-group" style="grid-column: 1 / -1;">
+                    <label for="cam1-select">카메라:</label>
                     <select id="cam1-select" class="dropdown glass">
-                        <option value="">카메라 로딩 중...</option>
-                    </select>
-                </div>
-                <div class="select-group">
-                    <label for="cam2-select">P2 (참여자) 카메라 (2인용):</label>
-                    <select id="cam2-select" class="dropdown glass p2-theme">
                         <option value="">카메라 로딩 중...</option>
                     </select>
                 </div>
@@ -168,11 +150,7 @@
             </div>
 
             <div class="btn-group">
-                <button class="btn btn-primary glow" id="btn-start-1p">혼자 타기 (1인용)</button>
-            </div>
-            <div class="btn-group" style="margin-top: 1rem;">
-                <button class="btn btn-primary glow" id="btn-start-dual"
-                    style="background: linear-gradient(90deg, #ff9900, #ff0055); width: 100%;">같이 타기 (듀얼 모니터)</button>
+                <button class="btn btn-primary glow" id="btn-start-1p">시작하기</button>
             </div>
             <div class="btn-group" style="margin-top: 1rem;">
                 <button class="btn btn-secondary" id="btn-history">기록 보기</button>
@@ -253,7 +231,6 @@
             warningModal: document.getElementById('warning-modal'),
 
             btnStart1P: document.getElementById('btn-start-1p'),
-            btnStartDual: document.getElementById('btn-start-dual'),
             btnStop: document.getElementById('btn-stop'),
             btnHistory: document.getElementById('btn-history'),
             btnCloseHistory: document.getElementById('btn-close-history'),
@@ -264,23 +241,20 @@
             btnChartDaily: document.getElementById('btn-chart-daily'),
             btnChartWeekly: document.getElementById('btn-chart-weekly'),
             btnChartMonthly: document.getElementById('btn-chart-monthly'),
-            btnChartYearly: document.getElementById('btn-chart-yearly'),
-
-            userSelect: document.getElementById('user-select'),
-            usernameInput: document.getElementById('username-input')
+            btnChartYearly: document.getElementById('btn-chart-yearly')
         };
 
-        // State
+        // 2단계: 인증 해제 및 Mock User 적용 (Bypass)
+        // 기존 JWT/OAuth 등의 Middleware 개념을 대신하여 항상 유효한 Mock User 세션을 반환/유지하도록 설정
         const state = {
             isRunning: false,
-            mode: 1, // 1 for 1P, 2 for 2P (Split), 3 for 2P (Dual Monitor)
+            mode: 1, // 1: 1P, 2: Split, 3: Dual
             sessionStartTime: null,
             history: [],
-            currentUser: null,
+            currentUser: { id: 'local', name: 'Rider', isAuthenticated: true }, // Mock User Object
             chartInstance: null,
             currentViewType: 'daily',
             p1: createPlayerState(),
-            p2: createPlayerState(),
             isSimulationMode: false
         };
 
@@ -364,48 +338,25 @@
 
         // Initialization
         function init() {
+            // 3단계: 앱 초기화 시 기존 다중 사용자용 캐시 데이터 초기화 (충돌 방지)
+            clearLegacyCaches();
+            
             bindEvents();
-            initUserSelect();
             initCameraSelect();
         }
 
-        function initUserSelect() {
-            updateUserDropdowns();
-
-            dom.userSelect.addEventListener('change', () => {
-                if (dom.userSelect.value === 'new') {
-                    dom.usernameInput.style.display = 'block';
-                    dom.usernameInput.focus();
-                    dom.usernameInput.value = ''; // Clear previous input
-                } else {
-                    dom.usernameInput.style.display = 'none';
-                }
-            });
-        }
-
-        function updateUserDropdowns() {
-            const existingUsers = [];
+        function clearLegacyCaches() {
+            const keysToRemove = [];
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
-                if (key && key.startsWith('cyclingData_')) {
-                    existingUsers.push(key.replace('cyclingData_', ''));
+                if (key && key.startsWith('cyclingData_') && key !== 'cyclingData_local_user') {
+                    keysToRemove.push(key);
                 }
             }
-
-            let html = '<option value="">-- 사용자 선택 --</option>';
-            existingUsers.forEach(user => {
-                const isSelected = (user === state.currentUser) ? 'selected' : '';
-                html += `<option value="${user}" ${isSelected}>${user}</option>`;
-            });
-            html += '<option value="new">+ 새 사용자 등록</option>';
-
-            // Only update innerHTML if it's different or initializing
-            dom.userSelect.innerHTML = html;
-
-            if (dom.userSelect.value !== 'new') {
-                dom.usernameInput.style.display = 'none';
-            }
+            keysToRemove.forEach(k => localStorage.removeItem(k));
+            localStorage.removeItem('cyclingHistory'); // Remove very old legacy key
         }
+
 
         async function initCameraSelect() {
             try {
@@ -418,35 +369,26 @@
                 const videoInputDevices = devices.filter(device => device.kind === 'videoinput');
 
                 dom.cam1Select.innerHTML = '';
-                dom.cam2Select.innerHTML = '';
 
                 if (videoInputDevices.length === 0) {
                     dom.cam1Select.innerHTML = '<option value="">카메라 없음</option>';
-                    dom.cam2Select.innerHTML = '<option value="">카메라 없음</option>';
                     return;
                 }
 
                 videoInputDevices.forEach((device, index) => {
                     const label = device.label || `Camera ${index + 1}`;
                     dom.cam1Select.innerHTML += `<option value="${device.deviceId}">${label}</option>`;
-                    dom.cam2Select.innerHTML += `<option value="${device.deviceId}">${label}</option>`;
                 });
-
-                // If there's a second camera, auto-select it for P2
-                if (videoInputDevices.length > 1) {
-                    dom.cam2Select.value = videoInputDevices[1].deviceId;
-                }
 
             } catch (e) {
                 console.error("Camera access denied or error enumerating devices:", e);
                 dom.cam1Select.innerHTML = '<option value="">권한 거부됨</option>';
-                dom.cam2Select.innerHTML = '<option value="">권한 거부됨</option>';
             }
         }
 
         function bindEvents() {
             dom.btnStart1P.addEventListener('click', () => startSession(1));
-            dom.btnStartDual.addEventListener('click', () => startSession(3));
+
             dom.btnStop.addEventListener('click', stopSession);
             dom.btnHistory.addEventListener('click', showHistory);
             dom.btnCloseHistory.addEventListener('click', hideHistory);
@@ -522,49 +464,23 @@
         }
 
         function startSession(modeCode) {
-            let selectedUser = dom.userSelect.value;
-            if (selectedUser === 'new') {
-                selectedUser = dom.usernameInput.value.trim();
-            }
 
-            if (!selectedUser) {
-                alert("이용할 사용자 이름을 먼저 선택하시거나 새로 입력해주세요.");
-                return;
-            }
-
-            state.currentUser = selectedUser;
-            loadUserData(state.currentUser);
+            // 2단계: 항상 Mock User 객체로 세션 고정 (Auth Guard Bypass)
+            state.currentUser = { id: 'local', name: 'Rider', isAuthenticated: true };
+            
+            // 3단계: 특정 유저 필터링 파라미터(userId) 제거하고 로컬 전체 데이터를 가져오도록 변경
+            loadUserData();
 
             // Hide UI start elements
             dom.startModal.classList.add('hidden');
             dom.hud.classList.remove('hidden');
 
             state.isRunning = true;
-            state.mode = modeCode;
+            state.mode = 1; // Always 1P
             state.sessionStartTime = new Date();
 
             // Player 1 Reset
             state.p1 = createPlayerState();
-
-            // Player 2 Reset & UI Toggle
-            state.p2 = createPlayerState();
-            if (state.mode === 2) {
-                dom.p2.hudContainer.classList.remove('hidden');
-                dom.p2.hudContainer.style.paddingTop = '12rem'; // 우측 상단 타이머와 겹치지 않도록 조정
-            } else {
-                dom.p2.hudContainer.classList.add('hidden'); // HIDDEN for 1P and Dual Monitor
-                dom.p2.hudContainer.style.paddingTop = '2rem';
-            }
-
-            if (state.mode === 3) {
-                // Open the second window
-                window.open('p2_view.html', 'player2_window', 'width=1024,height=768');
-                bc.postMessage({
-                    type: 'START',
-                    cam2Id: dom.cam2Select.value,
-                    useCustomBg: !!customBgVideoSrc // Signal P2 to fetch video from DB
-                });
-            }
 
             dom.bgVideo.play().catch(e => {
                 console.warn("Video Play Warning (This is expected if the video file is empty or missing): ", e);
@@ -573,9 +489,8 @@
 
             // Get selected camera IDs
             const cam1Id = dom.cam1Select.value;
-            const cam2Id = dom.cam2Select.value;
 
-            initVision(cam1Id, cam2Id).catch(err => {
+            initVision(cam1Id).catch(err => {
                 // 이 부분은 정말로 심각한 초기화 예외일 때만 탑승 (시뮬레이션 fallback이 동작하지 않았을 때)
                 if (!state.isSimulationMode) {
                     console.error("Vision Init Error:", err);
@@ -593,10 +508,6 @@
 
             dom.bgVideo.pause();
 
-            if (state.mode === 3) {
-                bc.postMessage({ type: 'STOP' });
-            }
-
             // Save session data
             saveSession();
 
@@ -609,15 +520,15 @@
          * ======================================================= */
         function saveSession() {
             if (state.p1.distance <= 0) return;
-            if (!state.currentUser) return; // Must have a user
+            
+            // Single local user hardcoding model
+            const targetUser = 'local_user';
 
             const durationMs = new Date() - state.sessionStartTime;
             const hours = durationMs / (1000 * 60 * 60);
             const avgSpeed = hours > 0 ? state.p1.distance / hours : 0;
 
             let modeText = "[1인용] ";
-            if (state.mode === 2) modeText = "[2인용 스플릿] ";
-            if (state.mode === 3) modeText = "[2인용 듀얼] ";
 
             const sessionRecord = {
                 date: modeText + new Date().toLocaleString('ko-KR'),
@@ -629,11 +540,13 @@
 
             state.history.unshift(sessionRecord);
             try {
-                localStorage.setItem(`cyclingData_${state.currentUser}`, JSON.stringify(state.history));
+                localStorage.setItem(`cyclingData_${targetUser}`, JSON.stringify(state.history));
             } catch (e) { console.error('LocalStorage error:', e); }
         }
 
-        function loadUserData(username) {
+        // 3단계: userId를 파라미터로 넘겨 데이터를 필터링하던 함수 수정 (단일 로컬 데이터 Fetch)
+        function loadUserData() {
+            const username = 'local_user';
             try {
                 const data = localStorage.getItem(`cyclingData_${username}`);
                 if (data) {
@@ -666,7 +579,8 @@
                 return;
             }
 
-            loadUserData(selectedUser);
+            // 3단계: 특정 유저 파라미터 제거
+            loadUserData();
 
             dom.startModal.classList.add('hidden');
             dom.historyModal.classList.remove('hidden');
